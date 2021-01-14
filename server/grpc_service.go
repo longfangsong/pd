@@ -1087,3 +1087,24 @@ func (s *Server) validateInternalRequest(header *pdpb.RequestHeader, onlyAllowLe
 	}
 	return nil
 }
+
+func (s *Server) GetAllRegions(ctx context.Context, request *pdpb.ScanRegionsRequest) (*pdpb.ScanRegionsResponse, error) {
+	regions := s.cluster.GetRegions()
+	resp := &pdpb.ScanRegionsResponse{Header: s.header()}
+	for _, r := range regions {
+		leader := r.GetLeader()
+		if leader == nil {
+			leader = &metapb.Peer{}
+		}
+		// Set RegionMetas and Leaders to make it compatible with old client.
+		resp.RegionMetas = append(resp.RegionMetas, r.GetMeta())
+		resp.Leaders = append(resp.Leaders, leader)
+		resp.Regions = append(resp.Regions, &pdpb.Region{
+			Region:       r.GetMeta(),
+			Leader:       leader,
+			DownPeers:    r.GetDownPeers(),
+			PendingPeers: r.GetPendingPeers(),
+		})
+	}
+	return resp, nil
+}

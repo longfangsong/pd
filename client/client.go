@@ -73,6 +73,8 @@ type Client interface {
 	// If a region has no leader, corresponding leader will be placed by a peer
 	// with empty value (PeerID is 0).
 	ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*Region, error)
+	// GetAllRegions gets all regions
+	GetAllRegions(ctx context.Context, limit int) ([]*Region, error)
 	// GetStore gets a store from PD by store id.
 	// The store may expire later. Caller is responsible for caching and taking care
 	// of store change.
@@ -797,6 +799,44 @@ func (c *client) ScanRegions(ctx context.Context, key, endKey []byte, limit int)
 		return nil, errors.WithStack(err)
 	}
 
+	var regions []*Region
+	if len(resp.GetRegions()) == 0 {
+		// Make it compatible with old server.
+		metas, leaders := resp.GetRegionMetas(), resp.GetLeaders()
+		for i := range metas {
+			r := &Region{Meta: metas[i]}
+			if i < len(leaders) {
+				r.Leader = leaders[i]
+			}
+			regions = append(regions, r)
+		}
+	} else {
+		for _, r := range resp.GetRegions() {
+			region := &Region{
+				Meta:         r.Region,
+				Leader:       r.Leader,
+				PendingPeers: r.PendingPeers,
+			}
+			for _, p := range r.DownPeers {
+				region.DownPeers = append(region.DownPeers, p.Peer)
+			}
+			regions = append(regions, region)
+		}
+	}
+	return regions, nil
+}
+
+func (c *client) GetAllRegions(ctx context.Context, limit int) ([]*Region, error) {
+	resp, err := c.leaderClient().GetAllRegions(ctx, &pdpb.ScanRegionsRequest{
+		Header:   c.requestHeader(),
+		StartKey: nil,
+		Limit:    int32(limit),
+		EndKey:   nil,
+	})
+	if err != nil {
+		c.ScheduleCheckLeader()
+		return nil, errors.WithStack(err)
+	}
 	var regions []*Region
 	if len(resp.GetRegions()) == 0 {
 		// Make it compatible with old server.
